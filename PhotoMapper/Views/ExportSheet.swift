@@ -15,6 +15,13 @@ private struct ExportCriteria: Equatable {
     let geographicFilter: LibraryQuery.GeographicFilter?
 }
 
+/// Inputs that change the size of the generated KML; the size plan is recomputed when they change.
+private struct SizePlanKey: Hashable {
+    let generation: Int
+    let includeRoute: Bool
+    let includeDescriptions: Bool
+}
+
 struct ExportSheet: View {
     @Environment(LibraryModel.self) private var library
     @Environment(\.dismiss) private var dismiss
@@ -39,6 +46,8 @@ struct ExportSheet: View {
     @State private var didApplyDefaults = false
     /// Bumped after each query so the map preview re-frames itself around the new results.
     @State private var mapGeneration = 0
+    @State private var sizePlan: KMLSizePlan?
+    @State private var splitForMyMaps = true
 
     private static let mapMarkerLimit = 300
 
@@ -56,12 +65,28 @@ struct ExportSheet: View {
     }
 
     private var hasCurrentResults: Bool { preparedCriteria == criteria }
-    private var kmlContent: KMLContent {
-        KMLContent(title: title, placemarks: placemarks,
-                   includeRoute: includeRoute, includeDescriptions: includeDescriptions)
+    private var exceedsPlacemarkLimit: Bool { placemarks.count > KMLBuilder.myMapsPlacemarkLimit }
+    private var exceedsByteLimit: Bool { (sizePlan?.estimatedBytes ?? 0) > KMLBuilder.myMapsByteLimit }
+    private var exceedsMyMapsLimits: Bool { exceedsPlacemarkLimit || exceedsByteLimit }
+
+    /// One part normally; several when the export is too big for My Maps and splitting is on.
+    private var kmlParts: [KMLContent] {
+        guard splitForMyMaps, exceedsMyMapsLimits, let ranges = sizePlan?.myMapsParts, ranges.count > 1 else {
+            return [KMLContent(title: title, placemarks: placemarks[...],
+                               includeRoute: includeRoute, includeDescriptions: includeDescriptions)]
+        }
+        return ranges.enumerated().map { index, range in
+            KMLContent(title: "\(title) (Part \(index + 1) of \(ranges.count))", placemarks: placemarks[range],
+                       includeRoute: includeRoute, includeDescriptions: includeDescriptions)
+        }
     }
-    private var fileName: String { KMLBuilder.fileName(for: title) }
-    private var canExport: Bool { hasCurrentResults && !isPreparing && !placemarks.isEmpty }
+    private var kmlDocument: KMLDocument { KMLDocument(parts: kmlParts) }
+    private var defaultFilename: String {
+        kmlDocument.parts.count > 1 ? KMLBuilder.baseName(for: title) : kmlDocument.parts[0].fileName
+    }
+    private var canExport: Bool {
+        hasCurrentResults && !isPreparing && !placemarks.isEmpty && sizePlan != nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -90,10 +115,14 @@ struct ExportSheet: View {
         .frame(width: 560, height: 760)
         #endif
         .onAppear(perform: applyDefaults)
+        .task(id: SizePlanKey(generation: mapGeneration, includeRoute: includeRoute,
+                              includeDescriptions: includeDescriptions)) {
+            await updateSizePlan()
+        }
         .fileExporter(isPresented: $isExporterPresented,
-                      document: KMLDocument(content: kmlContent),
-                      contentType: .kml,
-                      defaultFilename: fileName) { result in
+                      document: kmlDocument,
+                      contentType: kmlDocument.contentType,
+                      defaultFilename: defaultFilename) { result in
             switch result {
             case .success:
                 dismiss()
@@ -217,18 +246,47 @@ struct ExportSheet: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                if placemarks.count > 2000 {
-                    Label("Google My Maps imports at most 2,000 placemarks per layer. Consider exporting in batches.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                }
+                myMapsLimitRows
 
                 mapPreview
                     .id(mapGeneration)
                     .frame(height: 220)
                     .listRowInsets(EdgeInsets())
             }
+        }
+    }
+
+    /// File size, the My Maps placemark and size warnings, and the option to split.
+    @ViewBuilder
+    private var myMapsLimitRows: some View {
+        if !placemarks.isEmpty {
+            LabeledContent("Estimated file size") {
+                if let sizePlan {
+                    Text(sizePlan.estimatedBytes.formatted(.byteCount(style: .file)))
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+        }
+        if exceedsPlacemarkLimit {
+            Label("Google My Maps imports at most \(KMLBuilder.myMapsPlacemarkLimit.formatted()) places per file.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.orange)
+        }
+        if exceedsByteLimit {
+            Label("Google My Maps imports files up to \(KMLBuilder.myMapsByteLimit.formatted(.byteCount(style: .file))). Turning off descriptions makes the file smaller.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.orange)
+        }
+        if exceedsMyMapsLimits, let sizePlan {
+            Toggle("Split into files Google My Maps can import", isOn: $splitForMyMaps)
+            Text(splitForMyMaps
+                 ? "Creates \(sizePlan.myMapsParts.count) files with up to \(KMLBuilder.myMapsPlacemarkLimit.formatted()) places and \(KMLBuilder.myMapsByteLimit.formatted(.byteCount(style: .file))) each, saved together in a folder. Import each file as its own layer."
+                 : "Exports a single file. Google Earth can open it, but Google My Maps will reject it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -244,7 +302,11 @@ struct ExportSheet: View {
         Section("Import into Google Maps") {
             VStack(alignment: .leading, spacing: 6) {
                 Text("1. Open google.com/mymaps and create a new map.")
-                Text("2. In the layer panel choose Import, then pick the .kml file.")
+                if kmlParts.count > 1 {
+                    Text("2. In the layer panel choose Import and pick the first .kml file. Use Add layer, then Import, for each of the other files.")
+                } else {
+                    Text("2. In the layer panel choose Import, then pick the .kml file.")
+                }
                 Text("3. Each photo or video appears as a pin with its date and details.")
             }
             .font(.callout)
@@ -292,17 +354,18 @@ struct ExportSheet: View {
             }
             HStack(spacing: 12) {
                 Button {
-                    Pasteboard.copy(kmlContent.build())
+                    Pasteboard.copy(kmlParts[0].build())
                     statusMessage = "KML copied to the clipboard."
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
-                .disabled(!canExport)
+                .disabled(!canExport || kmlParts.count > 1)
+                .help(kmlParts.count > 1 ? "Copy is only available for a single file" : "Copy the KML text")
 
                 Spacer()
 
-                ShareLink(item: KMLFile(content: kmlContent),
-                          preview: SharePreview(fileName, image: Image(systemName: "map"))) {
+                ShareLink(items: kmlParts.map(KMLFile.init),
+                          preview: { SharePreview($0.content.fileName, image: Image(systemName: "map")) }) {
                     Label("Share / AirDrop", systemImage: "square.and.arrow.up")
                 }
                 .disabled(!canExport)
@@ -310,7 +373,8 @@ struct ExportSheet: View {
                 Button {
                     isExporterPresented = true
                 } label: {
-                    Label("Save KML…", systemImage: "square.and.arrow.down")
+                    Label(kmlParts.count > 1 ? "Save \(kmlParts.count) KML Files…" : "Save KML…",
+                          systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -365,6 +429,15 @@ struct ExportSheet: View {
         matchingCount = result.matchingCount
         preparedCriteria = requestedCriteria
         mapGeneration += 1
+    }
+
+    private func updateSizePlan() async {
+        sizePlan = nil
+        let marks = placemarks, route = includeRoute, descriptions = includeDescriptions
+        let plan = await Task.detached(priority: .userInitiated) {
+            KMLBuilder.sizePlan(placemarks: marks, includeRoute: route, includeDescriptions: descriptions)
+        }.value
+        if !Task.isCancelled { sizePlan = plan }
     }
 
     /// Start from what the user is looking at: their selection if they have one (across all

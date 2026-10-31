@@ -36,7 +36,9 @@ camera/movie icon, `<TimeStamp>`, description (date, type, duration, coordinates
 2. In the layer panel click **Import** and choose the exported `.kml` file.
 3. Each photo/video appears as a pin with its date and details.
 
-Google My Maps accepts up to 2,000 placemarks per layer; the app warns when a selection exceeds that.
+Google My Maps imports at most 2,000 placemarks and 5 MB per file. The export sheet shows the
+estimated file size, warns when either limit is exceeded, and can split the export into a folder of
+numbered files (`Title (Part 1 of 3).kml`, …) that each fit; import each one as its own layer.
 The file also opens directly in Google Earth.
 
 ## Building
