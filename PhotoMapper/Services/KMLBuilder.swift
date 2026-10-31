@@ -9,6 +9,7 @@ enum KMLBuilder {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
 
+        // KML colors are aabbggrr, not RGB.
         var out = """
         <?xml version="1.0" encoding="UTF-8"?>
         <kml xmlns="http://www.opengis.net/kml/2.2">
@@ -16,13 +17,13 @@ enum KMLBuilder {
           <name>\(escape(title))</name>
           <description>\(escape("Exported by PhotoMapper on \(Date().formatted(date: .long, time: .shortened)). \(placemarks.count) items."))</description>
           <Style id="photo">
-            <IconStyle><color>ff3ba0ff</color><scale>1.1</scale><Icon><href>\(photoIcon)</href></Icon></IconStyle>
+            <IconStyle><color>ffffa03b</color><scale>1.1</scale><Icon><href>\(photoIcon)</href></Icon></IconStyle>
           </Style>
           <Style id="video">
-            <IconStyle><color>ffff7a3b</color><scale>1.1</scale><Icon><href>\(videoIcon)</href></Icon></IconStyle>
+            <IconStyle><color>ff3b7aff</color><scale>1.1</scale><Icon><href>\(videoIcon)</href></Icon></IconStyle>
           </Style>
           <Style id="route">
-            <LineStyle><color>b3ff8c1e</color><width>3</width></LineStyle>
+            <LineStyle><color>b31e8cff</color><width>3</width></LineStyle>
           </Style>
 
         """

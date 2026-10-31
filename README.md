@@ -15,7 +15,8 @@ you want, and export their GPS locations as a **KML** file for Google Maps / Goo
 - **Thumbnail grid** with badges for location, video duration, Live Photo and favorite; adjustable
   thumbnail size; tap to select. Selection is kept while you change albums, search or filters.
 - **Export wizard** searches all photos in an album using media type, favorites, selected-item,
-  filename/album/date text, date range, GPS availability, and optional distance-from-place filters.
+  filename/album/date text, date range, and optional distance-from-place filters. It starts from
+  your current selection if you have one, otherwise from the album you are viewing.
   Review matching items on a map, then create a KML file with an optional chronological route:
   - **Save KML…** (Save panel on macOS, Files picker on iOS)
   - **Share / AirDrop** (system share sheet: AirDrop, Mail, Google Drive, …)
@@ -86,7 +87,7 @@ Builds show up under the TestFlight tab after processing. `ITSAppUsesNonExemptEn
 PhotoMapper/
   PhotoMapperApp.swift        App entry, Selection menu commands (⌘A, ⇧⌘L, ⇧⌘D, ⌘E)
   Info.plist                  Photos usage description, KML UTType declaration
-  PhotoMapper.entitlements    App Sandbox + Photos + user-selected files (macOS)
+  PhotoMapper.entitlements    App Sandbox + Photos + network (place search, map tiles) + user-selected files (macOS)
   Models/                     PhotoItem, AlbumItem, AssetFilter, KMLPlacemark
   Services/
     LibraryModel.swift        @Observable app state: auth, albums, query, selection, export prep

@@ -174,7 +174,6 @@ final class LibraryModel: NSObject {
 
     /// Fetches every asset matching the wizard criteria, then resolves names for located assets.
     func prepareExport(filter: AssetFilter, albumID: String, searchText: String,
-                       gpsRequirement: LibraryQuery.GPSRequirement,
                        geographicFilter: LibraryQuery.GeographicFilter?) async -> ExportPreparation {
         let collection = albums.first(where: { $0.id == albumID })?.collection
         let request = LibraryQuery.Request(
@@ -182,7 +181,6 @@ final class LibraryModel: NSObject {
             filter: filter,
             searchText: searchText,
             restrictToIDs: filter.showSelectedOnly ? Set(selected.keys) : nil,
-            gpsRequirement: gpsRequirement,
             geographicFilter: geographicFilter)
         return await Task.detached(priority: .userInitiated) {
             let result = LibraryQuery.run(request, cancellation: QueryCancellation())

@@ -10,14 +10,6 @@ final class QueryCancellation: @unchecked Sendable {
 }
 
 enum LibraryQuery {
-    enum GPSRequirement: String, CaseIterable, Identifiable, Equatable {
-        case any = "Any"
-        case required = "Required"
-        case missing = "Missing"
-
-        var id: String { rawValue }
-    }
-
     struct GeographicFilter: Equatable, Sendable {
         let latitude: Double
         let longitude: Double
@@ -29,7 +21,6 @@ enum LibraryQuery {
         let filter: AssetFilter
         let searchText: String
         let restrictToIDs: Set<String>?
-        var gpsRequirement: GPSRequirement = .any
         var geographicFilter: GeographicFilter? = nil
     }
 
@@ -67,16 +58,6 @@ enum LibraryQuery {
             if let ids = request.restrictToIDs, !ids.contains(asset.localIdentifier) { return }
             let hasLocation = asset.location != nil
             if request.filter.locationOnly && !hasLocation { return }
-            switch request.gpsRequirement {
-            case .any:
-                break
-            case .required where !hasLocation:
-                return
-            case .missing where hasLocation:
-                return
-            default:
-                break
-            }
             if let geographicFilter = request.geographicFilter {
                 guard let location = asset.location else { return }
                 let center = CLLocation(latitude: geographicFilter.latitude,

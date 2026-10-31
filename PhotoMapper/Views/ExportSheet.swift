@@ -12,7 +12,6 @@ private struct ExportCriteria: Equatable {
     let filter: AssetFilter
     let albumID: String
     let searchText: String
-    let gpsRequirement: LibraryQuery.GPSRequirement
     let geographicFilter: LibraryQuery.GeographicFilter?
 }
 
@@ -24,7 +23,6 @@ struct ExportSheet: View {
     @State private var exportFilter = AssetFilter()
     @State private var albumID = AlbumItem.allPhotosID
     @State private var searchText = ""
-    @State private var gpsRequirement = LibraryQuery.GPSRequirement.any
     @State private var locationQuery = ""
     @State private var resolvedLocation: ResolvedExportLocation?
     @State private var radiusMeters = 10_000.0
@@ -38,6 +36,9 @@ struct ExportSheet: View {
     @State private var preparedCriteria: ExportCriteria?
     @State private var isExporterPresented = false
     @State private var statusMessage: String?
+    @State private var didApplyDefaults = false
+    /// Bumped after each query so the map preview re-frames itself around the new results.
+    @State private var mapGeneration = 0
 
     private static let mapMarkerLimit = 300
 
@@ -51,13 +52,13 @@ struct ExportSheet: View {
     private var criteria: ExportCriteria {
         ExportCriteria(filter: exportFilter, albumID: albumID,
                        searchText: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
-                       gpsRequirement: gpsRequirement, geographicFilter: geographicFilter)
+                       geographicFilter: geographicFilter)
     }
 
     private var hasCurrentResults: Bool { preparedCriteria == criteria }
-    private var kmlText: String {
-        KMLBuilder.build(title: title, placemarks: placemarks,
-                         includeRoute: includeRoute, includeDescriptions: includeDescriptions)
+    private var kmlContent: KMLContent {
+        KMLContent(title: title, placemarks: placemarks,
+                   includeRoute: includeRoute, includeDescriptions: includeDescriptions)
     }
     private var fileName: String { KMLBuilder.fileName(for: title) }
     private var canExport: Bool { hasCurrentResults && !isPreparing && !placemarks.isEmpty }
@@ -88,8 +89,9 @@ struct ExportSheet: View {
         #if os(macOS)
         .frame(width: 560, height: 760)
         #endif
+        .onAppear(perform: applyDefaults)
         .fileExporter(isPresented: $isExporterPresented,
-                      document: KMLDocument(text: kmlText),
+                      document: KMLDocument(content: kmlContent),
                       contentType: .kml,
                       defaultFilename: fileName) { result in
             switch result {
@@ -126,12 +128,6 @@ struct ExportSheet: View {
             }
 
             TextField("Match file name, album, or date", text: $searchText)
-
-            Picker("GPS data", selection: $gpsRequirement) {
-                ForEach(LibraryQuery.GPSRequirement.allCases) { requirement in
-                    Text(requirement.rawValue).tag(requirement)
-                }
-            }
 
             locationControls
 
@@ -229,6 +225,7 @@ struct ExportSheet: View {
                 }
 
                 mapPreview
+                    .id(mapGeneration)
                     .frame(height: 220)
                     .listRowInsets(EdgeInsets())
             }
@@ -295,7 +292,7 @@ struct ExportSheet: View {
             }
             HStack(spacing: 12) {
                 Button {
-                    Pasteboard.copy(kmlText)
+                    Pasteboard.copy(kmlContent.build())
                     statusMessage = "KML copied to the clipboard."
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
@@ -304,7 +301,7 @@ struct ExportSheet: View {
 
                 Spacer()
 
-                ShareLink(item: KMLFile(text: kmlText, fileName: fileName),
+                ShareLink(item: KMLFile(content: kmlContent),
                           preview: SharePreview(fileName, image: Image(systemName: "map"))) {
                     Label("Share / AirDrop", systemImage: "square.and.arrow.up")
                 }
@@ -362,11 +359,24 @@ struct ExportSheet: View {
             filter: requestedCriteria.filter,
             albumID: requestedCriteria.albumID,
             searchText: requestedCriteria.searchText,
-            gpsRequirement: requestedCriteria.gpsRequirement,
             geographicFilter: requestedCriteria.geographicFilter)
         placemarks = result.placemarks
         skipped = result.skippedWithoutLocation
         matchingCount = result.matchingCount
         preparedCriteria = requestedCriteria
+        mapGeneration += 1
+    }
+
+    /// Start from what the user is looking at: their selection if they have one (across all
+    /// albums, since selection survives album changes), otherwise the album currently open.
+    private func applyDefaults() {
+        guard !didApplyDefaults else { return }
+        didApplyDefaults = true
+        if library.selectedCount > 0 {
+            albumID = AlbumItem.allPhotosID
+            exportFilter.showSelectedOnly = true
+        } else {
+            albumID = library.selectedAlbumID ?? AlbumItem.allPhotosID
+        }
     }
 }

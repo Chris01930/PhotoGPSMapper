@@ -125,11 +125,12 @@ struct AssetCell: View {
         guard loadedPixelSize != pixelSize else { return }
         cancel()
         let target = pixelSize
-        requestID = ThumbnailProvider.shared.request(item.asset, pixelSize: target) { result in
-            if let result {
-                image = result
-                loadedPixelSize = target
-            }
+        requestID = ThumbnailProvider.shared.request(item.asset, pixelSize: target) { result, isDegraded in
+            guard let result else { return }
+            image = result
+            // Only the final image counts; otherwise a request cancelled after the placeholder
+            // arrived would leave the cell blurry for good.
+            if !isDegraded { loadedPixelSize = target }
         }
     }
 
