@@ -75,20 +75,22 @@ enum LibraryQuery {
 }
 
 /// Matches an asset against free text: album titles it belongs to, its creation date
-/// (month names, weekday, year), and its original file name.
+/// (month names, weekday, year, or numeric like 10/18/2026), and its original file name.
 struct SearchMatcher {
     let text: String
     private let albumMemberIDs: Set<String>
-    private let dateFormatter: DateFormatter
+    private let dateTokens: [String]
+    private let dateFormatters: [DateFormatter]
 
     init?(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         self.text = trimmed
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMMM d, yyyy"
-        dateFormatter = formatter
+        // Each word must appear somewhere in the date text, so "July 2024" matches
+        // "Thursday, July 18, 2024". Commas are dropped so "October 18, 2026" works too.
+        dateTokens = trimmed.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init)
+        dateFormatters = Self.dateFormatters(numeric: trimmed.contains(where: \.isNumber))
 
         var ids = Set<String>()
         let userAlbums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
@@ -108,10 +110,36 @@ struct SearchMatcher {
 
     func matches(_ asset: PHAsset) -> Bool {
         if albumMemberIDs.contains(asset.localIdentifier) { return true }
-        if let date = asset.creationDate,
-           dateFormatter.string(from: date).localizedCaseInsensitiveContains(text) {
-            return true
-        }
+        if let date = asset.creationDate, matchesDate(date) { return true }
         return FilenameCache.shared.filename(for: asset).localizedCaseInsensitiveContains(text)
+    }
+
+    func matchesDate(_ date: Date) -> Bool {
+        let dateText = dateFormatters.map { $0.string(from: date) }.joined(separator: " ")
+        return dateTokens.allSatisfy { dateText.localizedCaseInsensitiveContains($0) }
+    }
+
+    /// Long form ("Sunday, October 18, 2026") plus, when the query has digits, numeric forms in
+    /// the user's locale order with and without zero padding (10/18/2026, 10/18/26) and ISO.
+    private static func dateFormatters(numeric: Bool) -> [DateFormatter] {
+        var formatters = [DateFormatter(format: "EEEE, MMMM d, yyyy")]
+        if numeric {
+            formatters += ["Mdyyyy", "MMddyyyy", "Mdyy"].map { DateFormatter(template: $0) }
+            formatters.append(DateFormatter(format: "yyyy-MM-dd", locale: Locale(identifier: "en_US_POSIX")))
+        }
+        return formatters
+    }
+}
+
+private extension DateFormatter {
+    convenience init(format: String, locale: Locale = .current) {
+        self.init()
+        self.locale = locale
+        dateFormat = format
+    }
+
+    convenience init(template: String) {
+        self.init()
+        setLocalizedDateFormatFromTemplate(template)
     }
 }
